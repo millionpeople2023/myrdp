@@ -1,0 +1,88 @@
+name: WINDOWS RDP - CLOUDFLARE (Improved)
+
+on:
+  workflow_dispatch
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 9999
+
+    steps:
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Enable Windows RDP & Set Password
+        run: |
+          # Enable RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -name "UserAuthentication" -Value 1
+
+          # Set password for runneradmin
+          $secpass = ConvertTo-SecureString "P@ssw0rd123!" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $secpass
+
+          Write-Host "✅ RDP enabled and password set"
+
+      - name: Start Cloudflare Tunnel (Headless, URL Capture)
+        shell: pwsh
+        run: |
+          # Start cloudflared tunnel in the background (no visible window)
+          $logFile = "$env:USERPROFILE\tunnel.log"
+          $process = Start-Process -NoNewWindow -FilePath "cloudflared.exe" `
+            -ArgumentList "tunnel --url tcp://localhost:3389 --logfile `"$logFile`"" `
+            -RedirectStandardOutput $logFile -RedirectStandardError $logFile -PassThru
+
+          Write-Host "Waiting for Cloudflare tunnel URL..."
+
+          $tunnelUrl = $null
+          for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Seconds 2
+            if (Test-Path $logFile) {
+              $content = Get-Content $logFile -Raw
+              if ($content -match '(https://[a-zA-Z0-9-]+\.trycloudflare\.com)') {
+                $tunnelUrl = $matches[1]
+                break
+              }
+            }
+          }
+
+          if (-not $tunnelUrl) {
+            Write-Host "❌ Failed to get tunnel URL. Log content:"
+            Get-Content $logFile
+            exit 1
+          }
+
+          Write-Host "🌐 Tunnel URL: $tunnelUrl"
+          $tunnelUrl | Out-File -FilePath tunnel_url.txt
+
+          # Store the process ID so we can optionally monitor it
+          $process.Id | Out-File -FilePath tunnel_pid.txt
+
+          # Set output for later steps (GitHub Actions style)
+          "TUNNEL_URL=$tunnelUrl" >> $env:GITHUB_ENV
+
+      - name: Show RDP Connection Info
+        run: |
+          $tunnelUrl = Get-Content tunnel_url.txt -Raw
+          $hostname = $tunnelUrl -replace 'https://',''
+          Write-Host "==================================================="
+          Write-Host "   WINDOWS RDP OVER CLOUDFLARE TUNNEL"
+          Write-Host "==================================================="
+          Write-Host "Connect using:"
+          Write-Host "  cloudflared access tcp --hostname $hostname --url localhost:3389"
+          Write-Host ""
+          Write-Host "Then use Remote Desktop to connect to localhost:3389"
+          Write-Host "Credentials:"
+          Write-Host "  Username: runneradmin"
+          Write-Host "  Password: P@ssw0rd123!"
+          Write-Host "==================================================="
+
+      - name: Keep Session Alive (Prevent Job Exit)
+        shell: pwsh
+        run: |
+          Write-Host "⏳ RDP tunnel is active. This job will run for up to 6 hours." -ForegroundColor Cyan
+          Write-Host "Connect using the command above." -ForegroundColor Cyan
+          # Sleep for 6 hours (or until timeout)
+          Start-Sleep -Seconds 21600
