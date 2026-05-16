@@ -1,0 +1,76 @@
+name: Convert Web Page to Encrypted PDF Split Archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Web address to convert to PDF (e.g., https://example.com)'
+        required: true
+        type: string
+      password:
+        description: 'Encryption password for the split archive'
+        required: true
+        type: string
+      archive_name:
+        description: 'Name of the compressed archive (without extension) – e.g., mydata'
+        required: false
+        default: 'webpage'
+        type: string
+      split_size:
+        description: 'Size of each split part (e.g., 100m, 200m)'
+        required: false
+        default: '100m'
+        type: string
+      output_dir:
+        description: 'Directory where split parts will be stored (created if missing)'
+        required: false
+        default: 'splits'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install 7-Zip and Google Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y p7zip-full wget
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+
+    - name: Convert web page to PDF
+      run: |
+        # اجرای chrome در حالت headless برای ساخت PDF
+        google-chrome-stable --headless --disable-gpu --no-sandbox \
+          --print-to-pdf="${{ inputs.archive_name }}.pdf" "${{ inputs.url }}"
+        echo "PDF created: ${{ inputs.archive_name }}.pdf"
+        echo "DOWNLOADED_FILE=${{ inputs.archive_name }}.pdf" >> $GITHUB_ENV
+
+    - name: Create split encrypted archive
+      env:
+        ARCHIVE_PASSWORD: ${{ inputs.password }}
+        SPLIT_SIZE: ${{ inputs.split_size }}
+        ARCHIVE_BASENAME: ${{ inputs.archive_name }}
+      run: |
+        echo "Splitting and encrypting: $DOWNLOADED_FILE"
+        7z a -t7z -v"$SPLIT_SIZE" -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" "$DOWNLOADED_FILE"
+        rm "$DOWNLOADED_FILE"
+
+    - name: Move split archives to target directory
+      run: |
+        TARGET_DIR="${{ inputs.output_dir }}"
+        mkdir -p "$TARGET_DIR"
+        mv "${{ inputs.archive_name }}.7z".* "$TARGET_DIR/"
+
+    - name: Commit and Push split files inside the directory
+      run: |
+        git config --global user.name "${{ github.actor }}"
+        git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+        git add "${{ inputs.output_dir }}"
+        git commit -m "Add split encrypted PDF from web page (${{ inputs.archive_name }})" || echo "No changes to commit"
+        git push
