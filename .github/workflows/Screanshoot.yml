@@ -33,6 +33,7 @@ jobs:
         wget --recursive --level=0 --page-requisites \
              --convert-links --adjust-extension \
              --no-directories --span-hosts \
+             -e robots=off \
              "${{ inputs.url }}"
     - name: Create split encrypted archive
       run: |
