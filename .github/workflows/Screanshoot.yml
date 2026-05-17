@@ -39,7 +39,6 @@ jobs:
           --depth=0 \
           --robots=0 \
           --ext-depth=2 \ 
-          --near \
           --can-go-up=0 \
           --can-go-down=0 \
           --stay-on-same-domain \
