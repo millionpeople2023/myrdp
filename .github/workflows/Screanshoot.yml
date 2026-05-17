@@ -1,78 +1,75 @@
-name: Capture Full-Page Screenshot and Create Encrypted Split Archive
+name: Full-Page Screenshot with shot-scraper + Encrypted (No Split)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Web address to capture full-page screenshot (e.g., https://example.com)'
+        description: 'Web address to capture full-page screenshot'
         required: true
         type: string
       password:
-        description: 'Encryption password for the split archive'
+        description: 'Encryption password for the archive'
         required: true
         type: string
       archive_name:
-        description: 'Name of the compressed archive (without extension) – e.g., myscreenshot'
+        description: 'Name of the encrypted archive (without extension) – e.g., myscreenshot'
         required: false
         default: 'screenshot'
         type: string
-      split_size:
-        description: 'Size of each split part (e.g., 100m, 200m)'
-        required: false
-        default: '100m'
-        type: string
       output_dir:
-        description: 'Directory where split parts will be stored (created if missing)'
+        description: 'Directory where the encrypted archive will be stored'
         required: false
-        default: 'splits'
+        default: 'captures'
         type: string
 
 jobs:
-  build:
+  capture-and-encrypt:
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install 7-Zip and Google Chrome
+    - name: Install 7-Zip and Python dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y p7zip-full wget
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+        sudo apt-get install -y p7zip-full
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install shot-scraper and Playwright browser
+      run: |
+        pip install shot-scraper
+        shot-scraper install
 
     - name: Capture full-page screenshot
       run: |
-        # گرفتن اسکرین‌شات کامل از کل صفحه (full page)
-        google-chrome-stable --headless --disable-gpu --no-sandbox \
-          --screenshot="${{ inputs.archive_name }}.png" \
-          --window-size=1280,800 \
-          --full-page "${{ inputs.url }}"
+        shot-scraper "${{ inputs.url }}" \
+          -o "${{ inputs.archive_name }}.png" \
+          --full-page \
+          --width 1280
         echo "Screenshot saved: ${{ inputs.archive_name }}.png"
-        echo "DOWNLOADED_FILE=${{ inputs.archive_name }}.png" >> $GITHUB_ENV
 
-    - name: Create split encrypted archive
+    - name: Create single encrypted archive (no split)
       env:
         ARCHIVE_PASSWORD: ${{ inputs.password }}
-        SPLIT_SIZE: ${{ inputs.split_size }}
         ARCHIVE_BASENAME: ${{ inputs.archive_name }}
       run: |
-        echo "Splitting and encrypting: $DOWNLOADED_FILE"
-        7z a -t7z -v"$SPLIT_SIZE" -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" "$DOWNLOADED_FILE"
-        rm "$DOWNLOADED_FILE"
+        7z a -t7z -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" "$ARCHIVE_BASENAME.png"
+        rm "$ARCHIVE_BASENAME.png"
 
-    - name: Move split archives to target directory
+    - name: Move encrypted archive to target directory
       run: |
         TARGET_DIR="${{ inputs.output_dir }}"
         mkdir -p "$TARGET_DIR"
-        mv "${{ inputs.archive_name }}.7z".* "$TARGET_DIR/"
+        mv "${{ inputs.archive_name }}.7z" "$TARGET_DIR/"
 
-    - name: Commit and Push split files inside the directory
+    - name: Commit and Push encrypted archive
       run: |
         git config --global user.name "${{ github.actor }}"
         git config --global user.email "${{ github.actor }}@users.noreply.github.com"
         git add "${{ inputs.output_dir }}"
-        git commit -m "Add split encrypted full-page screenshot (${{ inputs.archive_name }})" || echo "No changes to commit"
+        git commit -m "Add encrypted full-page screenshot (${{ inputs.archive_name }})" || echo "No changes to commit"
         git push
