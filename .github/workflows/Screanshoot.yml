@@ -1,80 +1,87 @@
-name: Full-Page Screenshot with Playwright (No Split)
+name: Clone Website with webcloner-js and Create Split Encrypted Archive
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Web address to capture full-page screenshot'
+        description: 'Website URL to clone (e.g., https://example.com)'
         required: true
         type: string
       password:
-        description: 'Encryption password for the archive'
+        description: 'Encryption password for the split archive'
         required: true
         type: string
       archive_name:
-        description: 'Name of the encrypted archive (without extension)'
+        description: 'Name of the compressed archive (without extension) – e.g., mysite'
         required: false
-        default: 'screenshot'
+        default: 'website-clone'
+        type: string
+      split_size:
+        description: 'Size of each split part (e.g., 100m, 200m)'
+        required: false
+        default: '100m'
         type: string
       output_dir:
-        description: 'Directory where the encrypted archive will be stored'
+        description: 'Directory where split parts will be stored (created if missing)'
         required: false
-        default: 'captures'
+        default: 'splits'
+        type: string
+      depth:
+        description: 'Crawl depth for webcloner-js (default 2)'
+        required: false
+        default: '2'
         type: string
 
 jobs:
-  capture-and-encrypt:
+  clone-and-archive:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    - name: Install 7-Zip and Python
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Clone and build webcloner-js
       run: |
-        sudo apt-get update
-        sudo apt-get install -y p7zip-full python3-pip
+        git clone https://github.com/maornissan/webcloner-js.git
+        cd webcloner-js
+        npm install
+        npm run build
 
-    - name: Install Playwright
+    - name: Run webcloner-js to clone website
       run: |
-        pip install playwright
-        playwright install chromium
+        cd webcloner-js
+        npm run dev -- "${{ inputs.url }}" -o ./cloned_site -d "${{ inputs.depth }}"
+        # Move cloned site to a predictable location outside webcloner-js folder
+        mv ./cloned_site ../cloned_website
 
-    - name: Capture full-page screenshot with Python
-      run: |
-        python3 <<EOF
-        import asyncio
-        from playwright.async_api import async_playwright
+    - name: Install 7-Zip
+      run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
-        async def main():
-            async with async_playwright() as p:
-                browser = await p.chromium.launch()
-                page = await browser.new_page(viewport={'width': 1280, 'height': 800})
-                await page.goto('${{ inputs.url }}', wait_until='networkidle')
-                # اسکرین‌شات از تمام طول صفحه
-                await page.screenshot(path='${{ inputs.archive_name }}.png', full_page=True)
-                await browser.close()
-
-        asyncio.run(main())
-        EOF
-        echo "Screenshot saved: ${{ inputs.archive_name }}.png"
-
-    - name: Create single encrypted archive
+    - name: Create split encrypted archive of the cloned website
       env:
         ARCHIVE_PASSWORD: ${{ inputs.password }}
+        SPLIT_SIZE: ${{ inputs.split_size }}
         ARCHIVE_BASENAME: ${{ inputs.archive_name }}
       run: |
-        7z a -t7z -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" "${ARCHIVE_BASENAME}.png"
-        rm "${ARCHIVE_BASENAME}.png"
+        echo "Creating split encrypted archive from cloned_website"
+        7z a -t7z -v"$SPLIT_SIZE" -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" ./cloned_website
+        rm -rf ./cloned_website   # Clean up original downloaded files
 
-    - name: Move encrypted archive to target directory
+    - name: Move split archives to target directory
       run: |
-        mkdir -p "${{ inputs.output_dir }}"
-        mv "${{ inputs.archive_name }}.7z" "${{ inputs.output_dir }}/"
+        TARGET_DIR="${{ inputs.output_dir }}"
+        mkdir -p "$TARGET_DIR"
+        mv "${{ inputs.archive_name }}.7z".* "$TARGET_DIR/"
 
-    - name: Commit and Push
+    - name: Commit and Push split files inside the directory
       run: |
         git config --global user.name "${{ github.actor }}"
         git config --global user.email "${{ github.actor }}@users.noreply.github.com"
         git add "${{ inputs.output_dir }}"
-        git commit -m "Add encrypted full-page screenshot (${{ inputs.archive_name }})" || echo "No changes"
+        git commit -m "Add split encrypted archive of ${{ inputs.url }} as ${{ inputs.archive_name }}" || echo "No changes to commit"
         git push
