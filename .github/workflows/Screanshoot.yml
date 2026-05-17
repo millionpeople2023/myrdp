@@ -1,87 +1,49 @@
-name: Clone Website with webcloner-js and Create Split Encrypted Archive
+name: Clone Single Page (Exact, No Extra Links)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Website URL to clone (e.g., https://example.com)'
+        description: 'Exact page URL'
         required: true
-        type: string
       password:
-        description: 'Encryption password for the split archive'
+        description: 'Encryption password'
         required: true
-        type: string
       archive_name:
-        description: 'Name of the compressed archive (without extension) – e.g., mysite'
-        required: false
-        default: 'website-clone'
-        type: string
+        description: 'Archive name'
+        default: 'single-page'
       split_size:
-        description: 'Size of each split part (e.g., 100m, 200m)'
-        required: false
+        description: 'Split size'
         default: '100m'
-        type: string
       output_dir:
-        description: 'Directory where split parts will be stored (created if missing)'
-        required: false
+        description: 'Output directory'
         default: 'splits'
-        type: string
-      depth:
-        description: 'Crawl depth for webcloner-js (default 2)'
-        required: false
-        default: '2'
-        type: string
 
 jobs:
-  clone-and-archive:
+  clone:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Clone and build webcloner-js
+    - uses: actions/checkout@v4
+    - name: Install tools
+      run: sudo apt-get update && sudo apt-get install -y wget p7zip-full
+    - name: Download page + assets (zero extra HTML)
       run: |
-        git clone https://github.com/maornissan/webcloner-js.git
-        cd webcloner-js
-        npm install
-        npm run build
-
-    - name: Run webcloner-js to clone website
+        mkdir page_clone
+        cd page_clone
+        wget --recursive --level=0 --page-requisites \
+             --convert-links --adjust-extension \
+             --no-directories --span-hosts \
+             "${{ inputs.url }}"
+    - name: Create split encrypted archive
       run: |
-        cd webcloner-js
-        npm run dev -- "${{ inputs.url }}" -o ./cloned_site -d "${{ inputs.depth }}"
-        # Move cloned site to a predictable location outside webcloner-js folder
-        mv ./cloned_site ../cloned_website
-
-    - name: Install 7-Zip
-      run: sudo apt-get update && sudo apt-get install -y p7zip-full
-
-    - name: Create split encrypted archive of the cloned website
-      env:
-        ARCHIVE_PASSWORD: ${{ inputs.password }}
-        SPLIT_SIZE: ${{ inputs.split_size }}
-        ARCHIVE_BASENAME: ${{ inputs.archive_name }}
+        7z a -t7z -v"${{ inputs.split_size }}" -p"${{ inputs.password }}" -mhe=on "${{ inputs.archive_name }}.7z" ./page_clone
+        rm -rf page_clone
+    - name: Commit and push
       run: |
-        echo "Creating split encrypted archive from cloned_website"
-        7z a -t7z -v"$SPLIT_SIZE" -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" ./cloned_website
-        rm -rf ./cloned_website   # Clean up original downloaded files
-
-    - name: Move split archives to target directory
-      run: |
-        TARGET_DIR="${{ inputs.output_dir }}"
-        mkdir -p "$TARGET_DIR"
-        mv "${{ inputs.archive_name }}.7z".* "$TARGET_DIR/"
-
-    - name: Commit and Push split files inside the directory
-      run: |
-        git config --global user.name "${{ github.actor }}"
-        git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+        mkdir -p "${{ inputs.output_dir }}"
+        mv "${{ inputs.archive_name }}.7z".* "${{ inputs.output_dir }}/"
+        git config user.name "${{ github.actor }}"
+        git config user.email "${{ github.actor }}@users.noreply.github.com"
         git add "${{ inputs.output_dir }}"
-        git commit -m "Add split encrypted archive of ${{ inputs.url }} as ${{ inputs.archive_name }}" || echo "No changes to commit"
+        git commit -m "Single-page clone of ${{ inputs.url }}" || echo "No changes"
         git push
