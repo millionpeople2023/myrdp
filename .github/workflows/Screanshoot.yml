@@ -1,4 +1,4 @@
-name: Full-Page Screenshot with shot-scraper + Encrypted (No Split)
+name: Full-Page Screenshot with Playwright (No Split)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       archive_name:
-        description: 'Name of the encrypted archive (without extension) – e.g., myscreenshot'
+        description: 'Name of the encrypted archive (without extension)'
         required: false
         default: 'screenshot'
         type: string
@@ -29,47 +29,52 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install 7-Zip and Python dependencies
+    - name: Install 7-Zip and Python
       run: |
         sudo apt-get update
-        sudo apt-get install -y p7zip-full
+        sudo apt-get install -y p7zip-full python3-pip
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install shot-scraper and Playwright browser
+    - name: Install Playwright
       run: |
-        pip install shot-scraper
-        shot-scraper install
+        pip install playwright
+        playwright install chromium
 
-    - name: Capture full-page screenshot
+    - name: Capture full-page screenshot with Python
       run: |
-        shot-scraper "${{ inputs.url }}" \
-          -o "${{ inputs.archive_name }}.png" \
-          --full-page \
-          --width 1280
+        python3 <<EOF
+        import asyncio
+        from playwright.async_api import async_playwright
+
+        async def main():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch()
+                page = await browser.new_page(viewport={'width': 1280, 'height': 800})
+                await page.goto('${{ inputs.url }}', wait_until='networkidle')
+                # اسکرین‌شات از تمام طول صفحه
+                await page.screenshot(path='${{ inputs.archive_name }}.png', full_page=True)
+                await browser.close()
+
+        asyncio.run(main())
+        EOF
         echo "Screenshot saved: ${{ inputs.archive_name }}.png"
 
-    - name: Create single encrypted archive (no split)
+    - name: Create single encrypted archive
       env:
         ARCHIVE_PASSWORD: ${{ inputs.password }}
         ARCHIVE_BASENAME: ${{ inputs.archive_name }}
       run: |
-        7z a -t7z -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" "$ARCHIVE_BASENAME.png"
-        rm "$ARCHIVE_BASENAME.png"
+        7z a -t7z -p"$ARCHIVE_PASSWORD" -mhe=on "${ARCHIVE_BASENAME}.7z" "${ARCHIVE_BASENAME}.png"
+        rm "${ARCHIVE_BASENAME}.png"
 
     - name: Move encrypted archive to target directory
       run: |
-        TARGET_DIR="${{ inputs.output_dir }}"
-        mkdir -p "$TARGET_DIR"
-        mv "${{ inputs.archive_name }}.7z" "$TARGET_DIR/"
+        mkdir -p "${{ inputs.output_dir }}"
+        mv "${{ inputs.archive_name }}.7z" "${{ inputs.output_dir }}/"
 
-    - name: Commit and Push encrypted archive
+    - name: Commit and Push
       run: |
         git config --global user.name "${{ github.actor }}"
         git config --global user.email "${{ github.actor }}@users.noreply.github.com"
         git add "${{ inputs.output_dir }}"
-        git commit -m "Add encrypted full-page screenshot (${{ inputs.archive_name }})" || echo "No changes to commit"
+        git commit -m "Add encrypted full-page screenshot (${{ inputs.archive_name }})" || echo "No changes"
         git push
