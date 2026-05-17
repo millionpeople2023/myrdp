@@ -1,22 +1,27 @@
-name: Clone Single Page (Exact, No Extra Links)
+name: Clone Single Page using HTTrack
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Exact page URL'
+        description: 'Page URL'
         required: true
+        type: string
       password:
         description: 'Encryption password'
         required: true
+        type: string
       archive_name:
         description: 'Archive name'
+        required: false
         default: 'single-page'
       split_size:
         description: 'Split size'
+        required: false
         default: '100m'
       output_dir:
         description: 'Output directory'
+        required: false
         default: 'splits'
 
 jobs:
@@ -24,22 +29,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Install tools
-      run: sudo apt-get update && sudo apt-get install -y wget p7zip-full
-    - name: Download page + assets (zero extra HTML)
+
+    - name: Install httrack and 7-Zip
+      run: sudo apt-get update && sudo apt-get install -y httrack p7zip-full
+
+    - name: Clone single page only
       run: |
-        mkdir page_clone
-        cd page_clone
-        wget --recursive --level=0 --page-requisites \
-             --convert-links --adjust-extension \
-             --no-directories --span-hosts \
-             -e robots=off \
-             "${{ inputs.url }}"
-    - name: Create split encrypted archive
+        httrack "${{ inputs.url }}" -O ./cloned_website \
+          --depth=0 \
+          --robots=0 \
+          --can-go-up=0 \
+          --can-go-down=0 \
+          --stay-on-same-domain \
+          --get-files \
+          --mirror
+
+    - name: Archive and encrypt
       run: |
-        7z a -t7z -v"${{ inputs.split_size }}" -p"${{ inputs.password }}" -mhe=on "${{ inputs.archive_name }}.7z" ./page_clone
-        rm -rf page_clone
-    - name: Commit and push
+        7z a -t7z -v"${{ inputs.split_size }}" -p"${{ inputs.password }}" -mhe=on "${ARCHIVE_BASENAME}.7z" ./cloned_website
+        rm -rf ./cloned_website
+      env:
+        ARCHIVE_BASENAME: ${{ inputs.archive_name }}
+
+    - name: Push to repo
       run: |
         mkdir -p "${{ inputs.output_dir }}"
         mv "${{ inputs.archive_name }}.7z".* "${{ inputs.output_dir }}/"
